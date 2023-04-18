@@ -1,0 +1,525 @@
+Assignment Part 2: new ML model
+================
+Quinn Thomas
+2023-04-18 12:41:42
+
+``` r
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+
+#For model
+library(caret)
+library(xgboost)
+library(parsnip)
+library(recipes)
+```
+
+## Objective
+
+Using machine learning and tidymodels to predict how much carbon is
+stored in vegetation across the U.S.
+
+## Expections
+
+This assignment requires the following
+
+- You must use more predictors than used in the
+  `machine-learning-101.Rmd` and `example-with-tuning.Rmd`. You do not
+  have to use all predictors. In fact, one of the decisions that you
+  will be making is which predictors you will include.
+
+- You must use a different model and/or engine than used in the
+  `machine-learning-101.Rmd` and `example-with-tuning.Rmd`.
+
+- You must upload your predictions of the new carbon stock data to
+  Canvas as a csv.
+
+### Guidance
+
+You will need to explore the different models/engines that are avialable
+in the tidymodels package. Following the the link below will show the
+list of models that are avialable. Clicking on a model type will show
+the different engines that are avialable to use.
+
+**[Alternative modeling
+approaches](https://parsnip.tidymodels.org/reference/index.html#models)**
+
+Here is a list of models that may be particularly useful for the data in
+this assignment.
+
+- [Single layer neural
+  network](https://parsnip.tidymodels.org/reference/mlp.html)
+- [Random
+  forest](https://parsnip.tidymodels.org/reference/rand_forest.html)
+- [Automatic Machine
+  Learning](https://parsnip.tidymodels.org/reference/auto_ml.html)
+- [Boosted
+  trees](https://parsnip.tidymodels.org/reference/boost_tree.html)
+- [Linear
+  Regression](https://parsnip.tidymodels.org/reference/linear_reg.html)
+
+The documentation of the engine will describe any pre-processessing that
+is required for the data and list the hyperparameters that are avialable
+for tuning. For example
+[here](https://parsnip.tidymodels.org/reference/details_rand_forest_ranger.html)
+is the documentation for the `ranger` engine within the `rand_forest`
+model
+
+Once you start pre-processing your data using a recipe, the following
+link will show the different “steps” that you can use. Clicking on the
+step will show how to use it in a recipe.
+
+**[Different recipes steps for feature
+engineering](https://recipes.tidymodels.org/reference/index.html)**
+
+There are broad classes of recipe steps that you might find useful for
+the data that you are working with in this assignment. You will be not
+be using all the available steps.
+
+- [Imputation (fill NA
+  values)](https://recipes.tidymodels.org/reference/index.html#step-functions-imputation)
+- [Transform
+  variables](https://recipes.tidymodels.org/reference/index.html#step-functions-individual-transformations)
+- [Add dummy
+  variables](https://recipes.tidymodels.org/reference/index.html#step-functions-dummy-variables-and-encodings)
+- [Create variable
+  interaction](https://recipes.tidymodels.org/reference/index.html#step-functions-interactions)
+- [Normalize variables (e.g., center on 0 and scale
+  sd)](https://recipes.tidymodels.org/reference/index.html#step-functions-normalization)
+- [Filter rows and select
+  columns](https://recipes.tidymodels.org/reference/index.html#step-functions-filters)
+- [Operate on
+  rows](https://recipes.tidymodels.org/reference/index.html#step-functions-row-operations)
+
+## Step 0: Warm-up
+
+**Question 11:** What model and engine did you select to use?
+
+**Answer 11: The model I chose to use was the boost_tree() model with
+the xgboost engine.**
+
+**Question 12:** Provide a high level description of the modeling
+approach
+
+**Answer 12: To begin my modeling approach, I first read-in the biomass
+data and added a column called “ID” that assigned a numerical label to
+each nlcdClass since the xgboost is not able to translate factor
+predictors, so all predictors must be converted to numeric values. I
+then split the data into training and testing data sets with an 80:20
+ratio, respectfully. I also used the set.seed() function to ensure that
+the different attempts/run of code had the same training data to ensure
+that the code I altered was affecting the efficiency of the model,
+rather than the random data set generated. I then added folds to the
+training data to further train my model. I then made the recipe for my
+model and removed the “plotID” and “nlcdClass” columns in step_rm from
+the model because they are not numeric columns. I also added
+step_impute_mean() and step_normalize() during trial and error code, and
+kept those as they decreased the rmse. Next I defined my model and added
+the tuning parameters tree_depth = and trees = which affect the amount
+and detail of trees created for this model. I also set the mode as
+“regression” since the goal is to predict data for a separate, but
+similar dataset. Next the workflow was assembled using the workflow()
+function and the previously created recipe and workflow. Next, the
+hyperparameters were tuned, specifically running the training code
+through the folds a described amount of times, grid function, and
+selecting “rmse” as a desired metric. The workflow was then updated with
+the new tuned hyper-parameters by selecting the best parameter values
+that provided the rmse value. The model was then fit to the training
+data which could then be used to predict values for the test data.
+Finally, the model was used to evaluate the new dataset and predictions
+were made for those plotIDs. **
+
+**Question 13:** Does the model require any special pre-processing of
+data. If so describe the steps needed.
+
+**Answer 13: The model required all predictors to be in numeric form, so
+in order to use the nlcdClass predictor, I created numerical labels for
+each unique nlcdClass and used that column when training my model. Other
+than having all predictors be numerical, there are no other necessary
+pre-processing steps needed in order for this model to work at the basic
+level. **
+
+**Question 14:** List any hyper-parameters that can be tuned
+
+**Answer 14: Listed below are all the hyper-parameters that can be tuned
+listed on the parsnip tidymodels site for the xgboost engine. For my
+model, I used trees = and tree_depth =. I tuned other combinations of
+hyper-parameters, but these gave the best results.** \# mtry = integer()
+\# trees = integer() \# min_n = integer() \# tree_depth = integer() \#
+learn_rate = numeric() \# loss_reduction = numeric() \# sample_size =
+numeric() \# stop_iter = integer()
+
+## Step 1: Obtain data
+
+``` r
+biomass_data_original <- read_csv("data/neon_biomass.csv", show_col_types = FALSE)
+```
+
+    #original 
+    biomass_data <- biomass_data_original |> 
+      select(plotID, nlcdClass, plot_kgCm2, precip, tavg) |> 
+      mutate(ID = as.numeric(as.factor(nlcdClass)))
+
+``` r
+#submitted
+biomass_data1 <- biomass_data_original |> 
+  select(plotID, nlcdClass, plot_kgCm2, precip, vpd) |> 
+  mutate(ID = as.numeric(as.factor(nlcdClass)))
+```
+
+    spc_tbl_ [1,000 × 17] (S3: spec_tbl_df/tbl_df/tbl/data.frame)
+     $ plotID    : chr - identifier of plot
+     $ daylength : num - mean annual daylength (s/day)
+     $ precip    : num - mean annual precipitation (mm)
+     $ range     : num - mean annual daily range in temperature (day max - day min; C)
+     $ tavg      : num - mean annual temperature (C)
+     $ solar     : num - mean annual solar radiation (W/m2)
+     $ tmax      : num - mean annual daily max temperature (C)
+     $ tmin      : num - mean annual daily min temperature (C)
+     $ vpd       : num - mean annual vapor pressure deficient (Pa)
+     $ elevation : num - elevation of plot (meters)
+     $ nlcdClass : chr - land-cover classification of plot
+     $ lat       : num - latitude of plot (degrees W)
+     $ long      : num - longitude of plot (degrees E)
+     $ plotType  : chr - type of plot (tower or distributed)
+     $ ndvi      : num - normalized difference vegetation index of plot from MODIS (unitless)
+     $ siteID    : chr - identifier of site that includes the plot
+     $ plot_kgCm2: num - vegetation carbon stock of plot (kgC/m2)
+
+## Step 2: Pre-process data
+
+### Split data into training/testing sets
+
+**Question 15:** Provide code for splitting data
+
+**Answer 15:**
+
+    #original
+    set.seed(100)
+    split <- initial_split(biomass_data, prop = 0.80, strata = ID)
+
+    train_data <- training(split)
+    test_data <- testing(split)
+
+``` r
+#submitted
+set.seed(100)
+split1 <- initial_split(biomass_data1, prop = 0.80, strata = ID)
+
+train_data1 <- training(split1)
+test_data1 <- testing(split1)
+```
+
+### Split training data into folds
+
+This step is only required if you are using a model and engine that has
+parameters that can be tuned.
+
+**Question 16:** Provide code for splitting data. If your model does not
+require parameter tuning, then state that as your answer rather than
+providing the code.
+
+**Answer 16:**
+
+    #original
+    folds <- vfold_cv(train_data, v = 10)
+
+``` r
+#submitted
+folds1 <- vfold_cv(train_data1, v = 10)
+```
+
+### Feature engineering using a recipe
+
+**Question 17:** Provide code that defines the recipe for feature
+engineering. Be sure to follow the recommendations for your selected
+engine.
+
+**Answer 17:**
+
+    #original
+    biomass_recipe <- biomass_data |> 
+      recipe(plot_kgCm2 ~ . ) |> 
+      step_rm(plotID, nlcdClass) |>
+      step_impute_mean() 
+
+``` r
+#submitted
+biomass_recipe1 <- biomass_data1 |> 
+  recipe(plot_kgCm2 ~ . ) |> 
+  step_rm(plotID, nlcdClass) |> 
+  step_impute_mean() |> 
+  step_normalize()
+```
+
+## Step 3: Specify model and workflow
+
+### Define model type and mode
+
+**Question 18:** Provide code that defines your model (model type +
+engine).
+
+**Answer 18:**
+
+    ### TUNING ###
+    #   mtry = integer()
+    #   trees = integer()
+    #   min_n = integer()
+    #   tree_depth = integer()
+    #   learn_rate = numeric()
+    #   loss_reduction = numeric()
+    #   sample_size = numeric()
+    #   stop_iter = integer()
+
+    #original
+    boost_for_mod <- 
+      boost_tree() |>
+      set_engine("xgboost") |> 
+      set_mode("regression")
+
+``` r
+#submitted
+boost_for_mod1 <- 
+  boost_tree(
+    tree_depth = tune(),
+    trees = 1500) |>
+  set_engine("xgboost") |> 
+  set_mode("regression")
+```
+
+### Define workflow
+
+**Question 19:** Provide code that defines the workflow
+
+**Answer 19:**
+
+    #original
+    biomass_wflow <-
+      workflow() |> 
+      add_model(boost_for_mod) |> 
+      add_recipe(biomass_recipe)
+
+    biomass_wflow
+
+``` r
+#submitted
+biomass_wflow1 <-
+  workflow() |> 
+  add_model(boost_for_mod1) |> 
+  add_recipe(biomass_recipe1)
+
+biomass_wflow1
+```
+
+    ## ══ Workflow ════════════════════════════════════════════════════════════════════
+    ## Preprocessor: Recipe
+    ## Model: boost_tree()
+    ## 
+    ## ── Preprocessor ────────────────────────────────────────────────────────────────
+    ## 3 Recipe Steps
+    ## 
+    ## • step_rm()
+    ## • step_impute_mean()
+    ## • step_normalize()
+    ## 
+    ## ── Model ───────────────────────────────────────────────────────────────────────
+    ## Boosted Tree Model Specification (regression)
+    ## 
+    ## Main Arguments:
+    ##   trees = 1500
+    ##   tree_depth = tune()
+    ## 
+    ## Computational engine: xgboost
+
+## Step 4: Train model on Training Data
+
+### Estimate best hyper-parameters using tuning
+
+**Question 20:** Provide code that tunes the hyper-parameters of your
+model. If your model+engine does not require tuning, then state that as
+your answer.
+
+**Answer 20:**
+
+``` r
+#submitted
+biomass_resample_fit1 <- 
+  biomass_wflow1 |>  
+  tune_grid(resamples = folds1,
+            grid = 25,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse))
+```
+
+### Update workflow with best hyper-parameters
+
+**Question 21:** Provide code that updates the workflow with the best
+hyper-parameters. If your model+engine does not require tuning, then
+state that as your answer.
+
+**Answer 21:**
+
+``` r
+#submitted
+biomass_resample_fit1 %>% 
+  collect_metrics() |> 
+  arrange(mean)
+```
+
+    ## # A tibble: 15 × 7
+    ##    tree_depth .metric .estimator  mean     n std_err .config              
+    ##         <int> <chr>   <chr>      <dbl> <int>   <dbl> <chr>                
+    ##  1          1 rmse    standard    7.43    10   0.613 Preprocessor1_Model15
+    ##  2          2 rmse    standard    8.02    10   0.629 Preprocessor1_Model03
+    ##  3          3 rmse    standard    8.03    10   0.573 Preprocessor1_Model01
+    ##  4          4 rmse    standard    8.06    10   0.553 Preprocessor1_Model07
+    ##  5          6 rmse    standard    8.10    10   0.630 Preprocessor1_Model04
+    ##  6          5 rmse    standard    8.12    10   0.639 Preprocessor1_Model08
+    ##  7         13 rmse    standard    8.16    10   0.669 Preprocessor1_Model11
+    ##  8          9 rmse    standard    8.17    10   0.655 Preprocessor1_Model09
+    ##  9         11 rmse    standard    8.17    10   0.654 Preprocessor1_Model14
+    ## 10         14 rmse    standard    8.17    10   0.667 Preprocessor1_Model05
+    ## 11          7 rmse    standard    8.17    10   0.644 Preprocessor1_Model13
+    ## 12         10 rmse    standard    8.18    10   0.648 Preprocessor1_Model06
+    ## 13          8 rmse    standard    8.18    10   0.658 Preprocessor1_Model02
+    ## 14         15 rmse    standard    8.19    10   0.664 Preprocessor1_Model12
+    ## 15         12 rmse    standard    8.19    10   0.657 Preprocessor1_Model10
+
+``` r
+best_hyperparameters1 <- biomass_resample_fit1 %>%
+  select_best("rmse")
+
+best_hyperparameters1
+```
+
+    ## # A tibble: 1 × 2
+    ##   tree_depth .config              
+    ##        <int> <chr>                
+    ## 1          1 Preprocessor1_Model15
+
+``` r
+final_workflow1 <- 
+  biomass_wflow1 %>% 
+  finalize_workflow(best_hyperparameters1)
+```
+
+## Step 5: Fit to all training data
+
+**Question 22:** Provide code that fits your model to the training data.
+Use the best hyper-parameter if you tuned them.
+
+**Answer 22:**
+
+    #original
+    biomass_fit <- 
+      biomass_wflow |> 
+      fit(data = train_data)
+
+``` r
+#submitted
+biomass_fit1 <- 
+  final_workflow1 |> 
+  fit(data = train_data1)
+```
+
+## Step 6: Predict Test Data
+
+**Question 23:** Provide code that predicts the test data
+
+**Answer 23:**
+
+    #original
+    predictions <- predict(biomass_fit, new_data = test_data)
+
+    pred_test <- bind_cols(test_data, predictions)
+
+``` r
+#submitted
+predictions1 <- predict(biomass_fit1, test_data1)
+
+pred_test1 <- bind_cols(test_data1, predictions1)
+```
+
+## Step 7: Evaluate model
+
+**Question 24:** Provide code calculates the rmse and r2 for the test
+data. Make sure that the table with rmse and r2 is shown in your knitted
+document.
+
+**Answer 24:**
+
+    #original ## 
+    multi_metric <- metric_set(rmse, rsq)
+
+    metric_table <- pred_test |> 
+    multi_metric(truth = plot_kgCm2, estimate = .pred)
+
+    metric_table
+
+``` r
+#submitted ## 
+multi_metric1 <- metric_set(rmse, rsq)
+
+metric_table1 <- pred_test1 |> 
+multi_metric1(truth = plot_kgCm2, estimate = .pred)
+
+metric_table1
+```
+
+    ## # A tibble: 2 × 3
+    ##   .metric .estimator .estimate
+    ##   <chr>   <chr>          <dbl>
+    ## 1 rmse    standard       6.96 
+    ## 2 rsq     standard       0.473
+
+## Step 8: Deploy model
+
+Use your trained model to predict new data. The new data is a data frame
+with all the same columns as the training and testing set above but with
+`NA` values for the biomass. I have the true biomass values and will
+calculate rmse for your predictions. Therefore you need to predict the
+biomass and upload your csv to Canvas and I will download them as a set
+and run the analysis in class to examine the “scores”
+
+Be sure to change the `name` to be your last name.
+
+``` r
+name <- "Chiang"
+```
+
+``` r
+submit_data <- read_csv("data/neon_biomass_new.csv", show_col_types = FALSE) |> 
+  mutate(ID = as.numeric(as.factor(nlcdClass)))
+```
+
+**Question 25:** Provide code to predict the new data
+
+**Answer 25:**
+
+``` r
+submit_predictions <- predict(biomass_fit1, new_data = submit_data) 
+
+submit_predicted <- bind_cols(submit_data, submit_predictions) |>
+  select(plotID, nlcdClass, .pred, precip, vpd)
+```
+
+**Question 26:** Use
+`write_csv(submit_predicted, file = paste0(name,"-submission.csv"))` to
+write your submissions to a csv.
+
+**Answer 26:**
+
+``` r
+write_csv(submit_predicted, file = paste0(name,"-submission.csv"))
+```
+
+**Question 27:** Upload `neon_biomass_submission.csv` to Canvas.
+
+**Answer 27:**
+
+## Knitting and committing
+
+Remember to Knit your document as a `github_document` and comment+push
+to GitHub your code, knitted document, and any files in the `figure-gfm`
+subdirectory that was created when you knitted the document.
